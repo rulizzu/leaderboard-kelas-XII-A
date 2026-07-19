@@ -1,19 +1,33 @@
 import streamlit as st
 import base64
 import os
+import json
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Leaderboard Kelas", layout="wide")
 
-# --- INISIALISASI DATA SISWA PERMANEN ---
-# Menggunakan st.storage agar data tersimpan di cloud Streamlit secara permanen dan global
-if 'students_db' not in st.storage:
-    # Membuat data awal kosong untuk 22 siswa jika belum ada di database
-    initial_data = {f"Siswa {i+1}": 0 for i in range(18)}
-    st.storage['students_db'] = initial_data
+# --- NAMA FILE DATABASE LOKAL ---
+DB_FILE = "leaderboard_data.json"
 
-# Mengambil data terbaru dari cloud storage
-students_data = st.storage['students_db']
+# Fungsi untuk membaca data dari file JSON
+def load_data():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    # Jika file belum ada atau rusak, buat data default 18 siswa
+    return {f"Siswa {i+1}": 0 for i in range(18)}
+
+# Fungsi untuk menyimpan data ke file JSON
+def save_data(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# Load data siswa secara global untuk sesi ini
+if 'students' not in st.session_state:
+    st.session_state.students = load_data()
 
 # --- FUNGSI UNTUK BACKGROUND GAMBAR LOKAL ---
 def get_base64_of_bin_file(bin_file):
@@ -79,37 +93,36 @@ st.title("🏆 Leaderboard Kelas XII-A")
 
 col1, col2 = st.columns([1, 2.5])
 
-# Kita tambahkan password sederhana agar siswa tidak bisa sembarangan mengubah nilai
 with col1:
     st.markdown("### 📝 Panel Input Guru")
     
     password = st.text_input("Masukkan Password Guru:", type="password")
     
-    # Ganti 'rahasia123' dengan password yang kamu inginkan
+    # Silakan ganti "rahasia123" dengan password Anda
     if password == "orcinusorca":
         st.success("Akses Diterima")
         
-        selected_slot = st.selectbox("Pilih Slot Siswa:", list(students_data.keys()))
+        selected_slot = st.selectbox("Pilih Slot Siswa:", list(st.session_state.students.keys()))
         new_name = st.text_input("Ubah Nama Siswa:", value=selected_slot)
         
         if st.button("Simpan Nama"):
-            if new_name != selected_slot and new_name not in students_data:
-                students_data[new_name] = students_data.pop(selected_slot)
-                st.storage['students_db'] = students_data  # Simpan ke cloud
+            if new_name != selected_slot and new_name not in st.session_state.students:
+                st.session_state.students[new_name] = st.session_state.students.pop(selected_slot)
+                save_data(st.session_state.students) # Simpan perubahan ke file
                 st.rerun()
 
         st.divider()
 
         add_points = st.number_input("Tambah Poin:", min_value=1, max_value=100, value=1)
         if st.button(f"➕ Tambah {add_points} Poin ke {new_name}"):
-            students_data[new_name] += add_points
-            st.storage['students_db'] = students_data  # Simpan ke cloud
+            st.session_state.students[new_name] += add_points
+            save_data(st.session_state.students) # Simpan perubahan ke file
             st.rerun()
             
         if st.button("➖ Kurangi 1 Poin (Koreksi)"):
-            if students_data[new_name] > 0:
-                students_data[new_name] -= 1
-                st.storage['students_db'] = students_data  # Simpan ke cloud
+            if st.session_state.students[new_name] > 0:
+                st.session_state.students[new_name] -= 1
+                save_data(st.session_state.students) # Simpan perubahan ke file
                 st.rerun()
     elif password != "":
         st.error("Password Salah!")
@@ -119,7 +132,9 @@ with col1:
 with col2:
     st.markdown("### 📊 Papan Peringkat Live")
     
-    sorted_students = sorted(students_data.items(), key=lambda x: x[1], reverse=True)
+    # Selalu muat data terbaru dari file agar sinkron antar user
+    current_students = load_data()
+    sorted_students = sorted(current_students.items(), key=lambda x: x[1], reverse=True)
     
     for rank, (name, points) in enumerate(sorted_students):
         rank_num = rank + 1
