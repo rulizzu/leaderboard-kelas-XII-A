@@ -1,44 +1,36 @@
 import streamlit as st
 import base64
 import os
-import gspread
-from gspread_dataframe import get_as_dataframe, set_with_dataframe
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Leaderboard Kelas", layout="wide")
 
-# --- KONEKSI GOOGLE SHEETS (MENGGUNAKAN GSPREAD) ---
-# MASUKKAN LINK GOOGLE SHEETS ANDA YANG SUDAH JADI 'EDITOR' DI SINI
+# --- KONEKSI GOOGLE SHEETS DENGAN SECRETS ---
+# MASUKKAN LINK GOOGLE SHEETS ANDA DI SINI
 URL_SHEET = "https://docs.google.com/spreadsheets/d/1l9eXqB5wHRqSHnTzYQAaNbJakXcIS6afIhS1fga6S3Q/edit?usp=sharing"
 
-@st.cache_data(ttl=0)
-def load_data_from_sheets(url):
-    try:
-        # Menghubungkan secara publik sebagai anonim editor
-        gc = gspread.public(url)
-        worksheet = gc.sheet1
-        df = get_as_dataframe(worksheet).dropna(how='all')
-        # Memastikan tipe data poin adalah integer
-        df['Poin'] = df['Poin'].fillna(0).astype(int)
-        return dict(zip(df['Nama'], df['Poin']))
-    except Exception as e:
-        st.error(f"Gagal memuat data. Pastikan link Google Sheets sudah benar dan diatur sebagai 'Anyone with link can Edit'.")
-        st.stop()
+try:
+    # Menghubungkan menggunakan kredensial rahasia yang sudah kita setting di Streamlit Secrets
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df = conn.read(spreadsheet=URL_SHEET, ttl=0)
+    
+    # Bersihkan baris kosong dan konversi tipe data
+    df = df.dropna(subset=['Nama'])
+    df['Poin'] = df['Poin'].fillna(0).astype(int)
+    students_data = dict(zip(df['Nama'], df['Poin']))
+except Exception as e:
+    st.error(f"Gagal memuat data dari Google Sheets. Periksa kembali pengaturan Secrets Anda di Streamlit Cloud.")
+    st.stop()
 
-def save_data_to_sheets(url, updated_dict):
+def save_data_to_sheets(updated_dict):
     try:
-        gc = gspread.public(url)
-        worksheet = gc.sheet1
         new_df = pd.DataFrame(list(updated_dict.items()), columns=['Nama', 'Poin'])
-        # Menulis ulang data ke spreadsheet
-        set_with_dataframe(worksheet, new_df)
+        conn.update(spreadsheet=URL_SHEET, data=new_df)
         st.cache_data.clear()
     except Exception as e:
-        st.error("Gagal menyimpan data ke Google Sheets.")
-
-# Load data siswa secara global
-students_data = load_data_from_sheets(URL_SHEET)
+        st.error("Gagal memperbarui data ke Google Sheets.")
 
 # --- FUNGSI UNTUK BACKGROUND GAMBAR LOKAL ---
 def get_base64_of_bin_file(bin_file):
@@ -110,7 +102,6 @@ with col1:
     
     password = st.text_input("Masukkan Password Guru:", type="password")
     
-    # Silakan ganti "rahasia123" dengan password Anda
     if password == "rahasia123":
         st.success("Akses Diterima")
         
@@ -120,7 +111,7 @@ with col1:
         if st.button("Simpan Nama"):
             if new_name != selected_slot and new_name not in students_data:
                 students_data[new_name] = students_data.pop(selected_slot)
-                save_data_to_sheets(URL_SHEET, students_data)
+                save_data_to_sheets(students_data)
                 st.rerun()
 
         st.divider()
@@ -128,13 +119,13 @@ with col1:
         add_points = st.number_input("Tambah Poin:", min_value=1, max_value=100, value=1)
         if st.button(f"➕ Tambah {add_points} Poin ke {new_name}"):
             students_data[new_name] = int(students_data[new_name]) + int(add_points)
-            save_data_to_sheets(URL_SHEET, students_data)
+            save_data_to_sheets(students_data)
             st.rerun()
             
         if st.button("➖ Kurangi 1 Poin (Koreksi)"):
             if int(students_data[new_name]) > 0:
                 students_data[new_name] = int(students_data[new_name]) - 1
-                save_data_to_sheets(URL_SHEET, students_data)
+                save_data_to_sheets(students_data)
                 st.rerun()
     elif password != "":
         st.error("Password Salah!")
