@@ -1,1 +1,3 @@
 streamlite
+st-theme
+st-gsheets-connection
