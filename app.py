@@ -1,33 +1,32 @@
 import streamlit as st
 import base64
 import os
-import json
+from streamlit_gsheets import GSheetsConnection
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Leaderboard Kelas", layout="wide")
 
-# --- NAMA FILE DATABASE LOKAL ---
-DB_FILE = "leaderboard_data.json"
+# --- KONEKSI GOOGLE SHEETS ---
+# MASUKKAN LINK GOOGLE SHEETS ANDA YANG SUDAH JADI 'EDITOR' DI SINI
+URL_SHEET = "https://docs.google.com/spreadsheets/d/1l9eXqB5wHRqSHnTzYQAaNbJakXcIS6afIhS1fga6S3Q/edit?usp=sharing"
 
-# Fungsi untuk membaca data dari file JSON
-def load_data():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    # Jika file belum ada atau rusak, buat data default 18 siswa
-    return {f"Siswa {i+1}": 0 for i in range(18)}
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    # Membaca data dari Google Sheets
+    df = conn.read(spreadsheet=URL_SHEET, ttl=0) # ttl=0 memastikan data selalu fresh
+    
+    # Mengubah dataframe menjadi dictionary agar cocok dengan kode leaderboard sebelumnya
+    students_data = dict(zip(df['Nama'], df['Poin']))
+except Exception as e:
+    st.error("Gagal terhubung ke Google Sheets. Pastikan link sudah benar dan diatur sebagai 'Anyone with link can Edit'.")
+    st.stop()
 
-# Fungsi untuk menyimpan data ke file JSON
-def save_data(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-# Load data siswa secara global untuk sesi ini
-if 'students' not in st.session_state:
-    st.session_state.students = load_data()
+# Fungsi untuk menyimpan data kembali ke Google Sheets
+def save_to_sheets(updated_dict):
+    import pandas as pd
+    new_df = pd.DataFrame(list(updated_dict.items()), columns=['Nama', 'Poin'])
+    conn.update(spreadsheet=URL_SHEET, data=new_df)
+    st.cache_data.clear() # Membersihkan cache agar perubahan langsung terlihat
 
 # --- FUNGSI UNTUK BACKGROUND GAMBAR LOKAL ---
 def get_base64_of_bin_file(bin_file):
@@ -80,7 +79,8 @@ st.markdown(page_bg_img, unsafe_allow_html=True)
 
 # --- FUNGSI TALLY MARKS ---
 def get_tally_html(points):
-    if points == 0:
+    points = int(points)
+    if points <= 0:
         return "0"
     fives = points // 5
     ones = points % 5
@@ -102,27 +102,27 @@ with col1:
     if password == "orcinusorca":
         st.success("Akses Diterima")
         
-        selected_slot = st.selectbox("Pilih Slot Siswa:", list(st.session_state.students.keys()))
+        selected_slot = st.selectbox("Pilih Slot Siswa:", list(students_data.keys()))
         new_name = st.text_input("Ubah Nama Siswa:", value=selected_slot)
         
         if st.button("Simpan Nama"):
-            if new_name != selected_slot and new_name not in st.session_state.students:
-                st.session_state.students[new_name] = st.session_state.students.pop(selected_slot)
-                save_data(st.session_state.students) # Simpan perubahan ke file
+            if new_name != selected_slot and new_name not in students_data:
+                students_data[new_name] = students_data.pop(selected_slot)
+                save_to_sheets(students_data)
                 st.rerun()
 
         st.divider()
 
         add_points = st.number_input("Tambah Poin:", min_value=1, max_value=100, value=1)
         if st.button(f"➕ Tambah {add_points} Poin ke {new_name}"):
-            st.session_state.students[new_name] += add_points
-            save_data(st.session_state.students) # Simpan perubahan ke file
+            students_data[new_name] = int(students_data[new_name]) + int(add_points)
+            save_to_sheets(students_data)
             st.rerun()
             
         if st.button("➖ Kurangi 1 Poin (Koreksi)"):
-            if st.session_state.students[new_name] > 0:
-                st.session_state.students[new_name] -= 1
-                save_data(st.session_state.students) # Simpan perubahan ke file
+            if int(students_data[new_name]) > 0:
+                students_data[new_name] = int(students_data[new_name]) - 1
+                save_to_sheets(students_data)
                 st.rerun()
     elif password != "":
         st.error("Password Salah!")
@@ -132,9 +132,7 @@ with col1:
 with col2:
     st.markdown("### 📊 Papan Peringkat Live")
     
-    # Selalu muat data terbaru dari file agar sinkron antar user
-    current_students = load_data()
-    sorted_students = sorted(current_students.items(), key=lambda x: x[1], reverse=True)
+    sorted_students = sorted(students_data.items(), key=lambda x: int(x[1]), reverse=True)
     
     for rank, (name, points) in enumerate(sorted_students):
         rank_num = rank + 1
@@ -156,7 +154,7 @@ with col2:
         <div class="leaderboard-row {css_class}">
             <div style="width: 10%;">#{rank_num}</div>
             <div style="width: 40%;">{name}</div>
-            <div style="width: 15%; text-align: center;">{points} pt</div>
+            <div style="width: 15%; text-align: center;">{int(points)} pt</div>
             <div style="width: 35%; text-align: right;">{tally_visual}</div>
         </div>
         """
