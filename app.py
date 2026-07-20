@@ -1,32 +1,44 @@
 import streamlit as st
 import base64
 import os
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from gspread_dataframe import get_as_dataframe, set_with_dataframe
+import pandas as pd
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Leaderboard Kelas", layout="wide")
 
-# --- KONEKSI GOOGLE SHEETS ---
+# --- KONEKSI GOOGLE SHEETS (MENGGUNAKAN GSPREAD) ---
 # MASUKKAN LINK GOOGLE SHEETS ANDA YANG SUDAH JADI 'EDITOR' DI SINI
 URL_SHEET = "https://docs.google.com/spreadsheets/d/1l9eXqB5wHRqSHnTzYQAaNbJakXcIS6afIhS1fga6S3Q/edit?usp=sharing"
 
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    # Membaca data dari Google Sheets
-    df = conn.read(spreadsheet=URL_SHEET, ttl=0) # ttl=0 memastikan data selalu fresh
-    
-    # Mengubah dataframe menjadi dictionary agar cocok dengan kode leaderboard sebelumnya
-    students_data = dict(zip(df['Nama'], df['Poin']))
-except Exception as e:
-    st.error("Gagal terhubung ke Google Sheets. Pastikan link sudah benar dan diatur sebagai 'Anyone with link can Edit'.")
-    st.stop()
+@st.cache_data(ttl=0)
+def load_data_from_sheets(url):
+    try:
+        # Menghubungkan secara publik sebagai anonim editor
+        gc = gspread.public(url)
+        worksheet = gc.sheet1
+        df = get_as_dataframe(worksheet).dropna(how='all')
+        # Memastikan tipe data poin adalah integer
+        df['Poin'] = df['Poin'].fillna(0).astype(int)
+        return dict(zip(df['Nama'], df['Poin']))
+    except Exception as e:
+        st.error(f"Gagal memuat data. Pastikan link Google Sheets sudah benar dan diatur sebagai 'Anyone with link can Edit'.")
+        st.stop()
 
-# Fungsi untuk menyimpan data kembali ke Google Sheets
-def save_to_sheets(updated_dict):
-    import pandas as pd
-    new_df = pd.DataFrame(list(updated_dict.items()), columns=['Nama', 'Poin'])
-    conn.update(spreadsheet=URL_SHEET, data=new_df)
-    st.cache_data.clear() # Membersihkan cache agar perubahan langsung terlihat
+def save_data_to_sheets(url, updated_dict):
+    try:
+        gc = gspread.public(url)
+        worksheet = gc.sheet1
+        new_df = pd.DataFrame(list(updated_dict.items()), columns=['Nama', 'Poin'])
+        # Menulis ulang data ke spreadsheet
+        set_with_dataframe(worksheet, new_df)
+        st.cache_data.clear()
+    except Exception as e:
+        st.error("Gagal menyimpan data ke Google Sheets.")
+
+# Load data siswa secara global
+students_data = load_data_from_sheets(URL_SHEET)
 
 # --- FUNGSI UNTUK BACKGROUND GAMBAR LOKAL ---
 def get_base64_of_bin_file(bin_file):
@@ -99,7 +111,7 @@ with col1:
     password = st.text_input("Masukkan Password Guru:", type="password")
     
     # Silakan ganti "rahasia123" dengan password Anda
-    if password == "orcinusorca":
+    if password == "rahasia123":
         st.success("Akses Diterima")
         
         selected_slot = st.selectbox("Pilih Slot Siswa:", list(students_data.keys()))
@@ -108,7 +120,7 @@ with col1:
         if st.button("Simpan Nama"):
             if new_name != selected_slot and new_name not in students_data:
                 students_data[new_name] = students_data.pop(selected_slot)
-                save_to_sheets(students_data)
+                save_data_to_sheets(URL_SHEET, students_data)
                 st.rerun()
 
         st.divider()
@@ -116,13 +128,13 @@ with col1:
         add_points = st.number_input("Tambah Poin:", min_value=1, max_value=100, value=1)
         if st.button(f"➕ Tambah {add_points} Poin ke {new_name}"):
             students_data[new_name] = int(students_data[new_name]) + int(add_points)
-            save_to_sheets(students_data)
+            save_data_to_sheets(URL_SHEET, students_data)
             st.rerun()
             
         if st.button("➖ Kurangi 1 Poin (Koreksi)"):
             if int(students_data[new_name]) > 0:
                 students_data[new_name] = int(students_data[new_name]) - 1
-                save_to_sheets(students_data)
+                save_data_to_sheets(URL_SHEET, students_data)
                 st.rerun()
     elif password != "":
         st.error("Password Salah!")
