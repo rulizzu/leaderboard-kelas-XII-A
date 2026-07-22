@@ -1,36 +1,29 @@
 import streamlit as st
 import base64
 import os
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Leaderboard Kelas", layout="wide")
 
-# --- KONEKSI GOOGLE SHEETS DENGAN SECRETS ---
-# MASUKKAN LINK GOOGLE SHEETS ANDA DI SINI
-URL_SHEET = "https://docs.google.com/spreadsheets/d/1l9eXqB5wHRqSHnTzYQAaNbJakXcIS6afIhS1fga6S3Q/edit?usp=sharing"
+# --- MEMBACA DATA DARI FILE EXCEL ---
+EXCEL_FILE = "leaderboard.xlsx"
 
-try:
-    # Menghubungkan menggunakan kredensial rahasia yang sudah kita setting di Streamlit Secrets
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df = conn.read(spreadsheet=URL_SHEET, ttl=0)
-    
-    # Bersihkan baris kosong dan konversi tipe data
-    df = df.dropna(subset=['Nama'])
-    df['Poin'] = df['Poin'].fillna(0).astype(int)
-    students_data = dict(zip(df['Nama'], df['Poin']))
-except Exception as e:
-    st.error(f"Gagal memuat data dari Google Sheets. Periksa kembali pengaturan Secrets Anda di Streamlit Cloud.")
-    st.stop()
+@st.cache_data(ttl=0) # ttl=0 agar selalu membaca data paling baru
+def load_data_from_excel():
+    if os.path.exists(EXCEL_FILE):
+        try:
+            df = pd.read_excel(EXCEL_FILE)
+            df['Poin'] = df['Poin'].fillna(0).astype(int)
+            return dict(zip(df['Nama'], df['Poin']))
+        except Exception as e:
+            st.error(f"Gagal membaca file Excel: {e}")
+            st.stop()
+    else:
+        st.error(f"File '{EXCEL_FILE}' tidak ditemukan di GitHub. Pastikan Anda sudah mengunggahnya.")
+        st.stop()
 
-def save_data_to_sheets(updated_dict):
-    try:
-        new_df = pd.DataFrame(list(updated_dict.items()), columns=['Nama', 'Poin'])
-        conn.update(spreadsheet=URL_SHEET, data=new_df)
-        st.cache_data.clear()
-    except Exception as e:
-        st.error("Gagal memperbarui data ke Google Sheets.")
+students_data = load_data_from_excel()
 
 # --- FUNGSI UNTUK BACKGROUND GAMBAR LOKAL ---
 def get_base64_of_bin_file(bin_file):
@@ -92,73 +85,34 @@ def get_tally_html(points):
     tally_1 = "|" * ones
     return f"<span class='tally-marks'>{tally_5 * fives}{tally_1}</span>"
 
-# --- TATA LETAK APLIKASI (UI) ---
+# --- TATA LETAK APLIKASI (HANYA MENAMPILKAN PERINGKAT) ---
 st.title("🏆 Leaderboard Kelas XII-A")
 
-col1, col2 = st.columns([1, 2.5])
+# Mengurutkan siswa berdasarkan poin tertinggi
+sorted_students = sorted(students_data.items(), key=lambda x: int(x[1]), reverse=True)
 
-with col1:
-    st.markdown("### 📝 Panel Input Guru")
+for rank, (name, points) in enumerate(sorted_students):
+    rank_num = rank + 1
     
-    password = st.text_input("Masukkan Password Guru:", type="password")
-    
-    if password == "rahasia123":
-        st.success("Akses Diterima")
-        
-        selected_slot = st.selectbox("Pilih Slot Siswa:", list(students_data.keys()))
-        new_name = st.text_input("Ubah Nama Siswa:", value=selected_slot)
-        
-        if st.button("Simpan Nama"):
-            if new_name != selected_slot and new_name not in students_data:
-                students_data[new_name] = students_data.pop(selected_slot)
-                save_data_to_sheets(students_data)
-                st.rerun()
-
-        st.divider()
-
-        add_points = st.number_input("Tambah Poin:", min_value=1, max_value=100, value=1)
-        if st.button(f"➕ Tambah {add_points} Poin ke {new_name}"):
-            students_data[new_name] = int(students_data[new_name]) + int(add_points)
-            save_data_to_sheets(students_data)
-            st.rerun()
-            
-        if st.button("➖ Kurangi 1 Poin (Koreksi)"):
-            if int(students_data[new_name]) > 0:
-                students_data[new_name] = int(students_data[new_name]) - 1
-                save_data_to_sheets(students_data)
-                st.rerun()
-    elif password != "":
-        st.error("Password Salah!")
+    if rank_num == 1:
+        css_class = "rank-1"
+    elif rank_num == 2:
+        css_class = "rank-2"
+    elif rank_num == 3:
+        css_class = "rank-3"
+    elif rank_num in [4, 5]:
+        css_class = "rank-4"
     else:
-        st.info("Silahkan masukkan password untuk mengakses panel input.")
+        css_class = ""
 
-with col2:
-    st.markdown("### 📊 Papan Peringkat Live")
+    tally_visual = get_tally_html(points)
     
-    sorted_students = sorted(students_data.items(), key=lambda x: int(x[1]), reverse=True)
-    
-    for rank, (name, points) in enumerate(sorted_students):
-        rank_num = rank + 1
-        
-        if rank_num == 1:
-            css_class = "rank-1"
-        elif rank_num == 2:
-            css_class = "rank-2"
-        elif rank_num == 3:
-            css_class = "rank-3"
-        elif rank_num in [4, 5]:
-            css_class = "rank-4"
-        else:
-            css_class = ""
-
-        tally_visual = get_tally_html(points)
-        
-        row_html = f"""
-        <div class="leaderboard-row {css_class}">
-            <div style="width: 10%;">#{rank_num}</div>
-            <div style="width: 40%;">{name}</div>
-            <div style="width: 15%; text-align: center;">{int(points)} pt</div>
-            <div style="width: 35%; text-align: right;">{tally_visual}</div>
-        </div>
-        """
-        st.markdown(row_html, unsafe_allow_html=True)
+    row_html = f"""
+    <div class="leaderboard-row {css_class}">
+        <div style="width: 10%;">#{rank_num}</div>
+        <div style="width: 40%;">{name}</div>
+        <div style="width: 15%; text-align: center;">{int(points)} pt</div>
+        <div style="width: 35%; text-align: right;">{tally_visual}</div>
+    </div>
+    """
+    st.markdown(row_html, unsafe_allow_html=True)
